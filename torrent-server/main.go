@@ -10,6 +10,8 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	bittorrent "github.com/anacrolix/torrent"
 	"github.com/anacrolix/torrent/types/infohash"
@@ -20,6 +22,72 @@ import (
 
 type AddTorrentRequest struct {
 	Path string `json:"path"`
+}
+
+var nextDownloadScheduler = newAutoDownloadScheduler()
+
+type autoDownloadScheduler struct {
+	mu      sync.Mutex
+	running map[string]struct{}
+}
+
+func newAutoDownloadScheduler() *autoDownloadScheduler {
+	return &autoDownloadScheduler{
+		running: make(map[string]struct{}),
+	}
+}
+
+func (s *autoDownloadScheduler) scheduleNext(torrent *bittorrent.Torrent, currentFile *bittorrent.File) {
+	key := fmt.Sprintf("%s|%s", torrent.InfoHash().String(), currentFile.Path())
+
+	s.mu.Lock()
+	if _, exists := s.running[key]; exists {
+		s.mu.Unlock()
+		return
+	}
+	s.running[key] = struct{}{}
+	s.mu.Unlock()
+
+	go func() {
+		defer func() {
+			s.mu.Lock()
+			delete(s.running, key)
+			s.mu.Unlock()
+		}()
+
+		// Wait for the currently streamed file to finish downloading before starting the next one.
+		for {
+			if currentFile.BytesCompleted() >= currentFile.Length() {
+				prioritizeNextFile(torrent, currentFile)
+				return
+			}
+			time.Sleep(2 * time.Second)
+		}
+	}()
+}
+
+func prioritizeNextFile(torrent *bittorrent.Torrent, currentFile *bittorrent.File) {
+	files := torrent.Files()
+	var nextFile *bittorrent.File
+
+	for idx, file := range files {
+		if file.Path() == currentFile.Path() && idx+1 < len(files) {
+			nextFile = files[idx+1]
+			break
+		}
+	}
+
+	if nextFile == nil {
+		return
+	}
+
+	// Skip if the next file is already fully downloaded.
+	if nextFile.BytesCompleted() >= nextFile.Length() {
+		return
+	}
+
+	// Set next file priority to normal to start downloading it.
+	nextFile.SetPriority(bittorrent.PiecePriorityNormal)
 }
 
 func main() {
@@ -143,11 +211,10 @@ func main() {
 
 		// Reprioritize files so the requested episode/movie gets downloaded first.
 		for _, file := range torrent.Files() {
-			if file.Path() == filepath {
-				file.SetPriority(bittorrent.PiecePriorityHigh)
-			} else {
-				file.SetPriority(bittorrent.PiecePriorityNone)
+			if file.Path() != filepath {
+				continue
 			}
+			file.SetPriority(bittorrent.PiecePriorityHigh)
 		}
 
 		if c.Request.Method == "HEAD" {
@@ -157,6 +224,8 @@ func main() {
 			c.Header("Accept-Ranges", "bytes")
 			return
 		}
+
+		nextDownloadScheduler.scheduleNext(torrent, targetFile)
 
 		// Get file size
 		fileSize := targetFile.Length()
