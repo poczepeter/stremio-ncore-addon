@@ -32,6 +32,10 @@ export class StreamService {
   }): Stream {
     const config = this.configService.getConfig();
     const torrentFileIndex = torrent.getMediaFileIndex({ season, episode });
+    const fileForStream = torrent.files[torrentFileIndex]!;
+    const streamName = torrent.displayResolution(
+      torrent.getResolution(fileForStream.name),
+    );
 
     const sourceName = encodeURIComponent(torrent.sourceName);
     const sourceId = encodeURIComponent(torrent.sourceId);
@@ -50,6 +54,7 @@ export class StreamService {
     return {
       url: `${config.addonUrl}/api/auth/${deviceToken}/stream/play/${sourceName}/${sourceId}/${infoHash}/${fileIndex}`,
       description,
+      name: streamName,
       behaviorHints: {
         notWebReady: true,
         bingeGroup: torrent.infoHash,

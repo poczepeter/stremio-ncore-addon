@@ -1,10 +1,12 @@
 FROM golang:1.24-alpine AS go-build
+ARG TARGETOS
+ARG TARGETARCH
 WORKDIR /app
 COPY torrent-server/go.mod ./go.mod
 COPY torrent-server/go.sum ./go.sum
 RUN go mod download
 COPY ./torrent-server ./
-RUN CGO_ENABLED=0 GOOS=linux go build -o ./
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -o ./torrent-server
 
 FROM node:20.16.0-alpine AS node-base
 WORKDIR /app

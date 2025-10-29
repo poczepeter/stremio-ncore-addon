@@ -141,6 +141,15 @@ func main() {
 			return
 		}
 
+		// Reprioritize files so the requested episode/movie gets downloaded first.
+		for _, file := range torrent.Files() {
+			if file.Path() == filepath {
+				file.SetPriority(bittorrent.PiecePriorityHigh)
+			} else {
+				file.SetPriority(bittorrent.PiecePriorityNone)
+			}
+		}
+
 		if c.Request.Method == "HEAD" {
 			c.Status(http.StatusOK)
 			c.Header("Content-Length", strconv.Itoa(int(targetFile.Length())))
